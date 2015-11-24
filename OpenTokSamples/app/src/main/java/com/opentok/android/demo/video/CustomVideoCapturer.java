@@ -12,6 +12,7 @@ import android.hardware.Camera.Size;
 import android.os.AsyncTask;
 import android.os.Environment;
 import android.util.Log;
+import android.util.LruCache;
 import android.view.Display;
 import android.view.Surface;
 import android.view.WindowManager;
@@ -66,7 +67,8 @@ public class CustomVideoCapturer extends BaseVideoCapturer implements
 
     private final Context mContext;
     private boolean isReadyToGenerate;
-    List<Bitmap> mFrameContainer;
+    //List<Bitmap> mFrameContainer;
+    private LruCache<String, Bitmap> mMemoryCache;
 
     //ByteArrayOutputStream mGifByteStream;
     //AnimatedGifEncoder mGifEncoder;
@@ -82,10 +84,37 @@ public class CustomVideoCapturer extends BaseVideoCapturer implements
                 .getSystemService(Context.WINDOW_SERVICE);
         mCurrentDisplay = windowManager.getDefaultDisplay();
 
-        mFrameContainer = new ArrayList<>();
+        //mFrameContainer = new ArrayList<>();
         //mGifByteStream = new ByteArrayOutputStream();
         //mGifEncoder = new AnimatedGifEncoder();
         isReadyToGenerate = false;
+
+        // Get max available VM memory, exceeding this amount will throw an
+        // OutOfMemory exception. Stored in kilobytes as LruCache takes an
+        // int in its constructor.
+        final int maxMemory = (int) (Runtime.getRuntime().maxMemory() / 1024);
+
+        // Use 1/8th of the available memory for this memory cache.
+        final int cacheSize = maxMemory / 8;
+
+        mMemoryCache = new LruCache<String, Bitmap>(cacheSize) {
+            @Override
+            protected int sizeOf(String key, Bitmap bitmap) {
+                // The cache size will be measured in kilobytes rather than
+                // number of items.
+                return bitmap.getByteCount() / 1024;
+            }
+        };
+    }
+
+    public void addBitmapToMemoryCache(String key, Bitmap bitmap) {
+        if (getBitmapFromMemCache(key) == null) {
+            mMemoryCache.put(key, bitmap);
+        }
+    }
+
+    public Bitmap getBitmapFromMemCache(String key) {
+        return mMemoryCache.get(key);
     }
 
     @Override
@@ -411,10 +440,13 @@ public class CustomVideoCapturer extends BaseVideoCapturer implements
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         AnimatedGifEncoder encoder = new AnimatedGifEncoder();
         encoder.start(bos);
-        for (Bitmap bitmap: mFrameContainer) {
+        for (int i = 0; i < 10; i++) {
             //String imgPath = Environment.getExternalStorageDirectory().getPath() + File.separator + "Pictures" + File.separator + "Test" + File.separator + i + ".png";
             //Bitmap bitmap = BitmapFactory.decodeFile(imgPath, options);
-            encoder.addFrame(bitmap);
+            Bitmap bitmap = getBitmapFromMemCache(String.valueOf(i));
+            if(bitmap != null) {
+                encoder.addFrame(bitmap);
+            }
         }
         encoder.finish();
         clearBitmaps();
@@ -422,19 +454,21 @@ public class CustomVideoCapturer extends BaseVideoCapturer implements
     }
 
     public void clearBitmaps() {
-        if(mFrameContainer != null) {
+        /*if(mFrameContainer != null) {
             for (Bitmap bitmap: mFrameContainer) {
                 bitmap.recycle();
+                bitmap = null;
             }
             mFrameContainer.clear();
-        }
+        }*/
+        mMemoryCache.evictAll();
     }
 
     public boolean saveGif() {
         boolean result = false;
         FileOutputStream outStream = null;
         try{
-            outStream = new FileOutputStream(Environment.getExternalStorageDirectory().getPath() + File.separator + "Pictures" + File.separator + "Test" + File.separator + "test.gif");
+            outStream = new FileOutputStream(Environment.getExternalStorageDirectory().getPath() + File.separator + "Pictures" + File.separator + "Test" + File.separator + "test_new.gif");
             outStream.write(generateGIF());
             outStream.close();
             result = true;
@@ -471,7 +505,12 @@ public class CustomVideoCapturer extends BaseVideoCapturer implements
             decodeYUV(argb8888, args[0], WIDTH, HEIGHT);
             Bitmap bitmap = Bitmap.createBitmap(argb8888, WIDTH, HEIGHT, Bitmap.Config.ARGB_8888);
 
-            mFrameContainer.add(bitmap);
+            if(bitmap != null) {
+                addBitmapToMemoryCache(String.valueOf(imageIndex), bitmap);
+            }
+
+            //mFrameContainer.add(bitmap);
+
             //mGifEncoder.addFrame(bitmap);
             //bitmap.recycle();
 
