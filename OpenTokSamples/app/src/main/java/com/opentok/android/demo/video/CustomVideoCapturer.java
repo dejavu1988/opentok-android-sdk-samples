@@ -4,6 +4,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.ImageFormat;
+import android.graphics.Matrix;
 import android.graphics.PixelFormat;
 import android.graphics.SurfaceTexture;
 import android.hardware.Camera;
@@ -21,6 +22,7 @@ import android.widget.Toast;
 import com.opentok.android.BaseVideoCapturer;
 
 import java.io.BufferedOutputStream;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
@@ -67,8 +69,17 @@ public class CustomVideoCapturer extends BaseVideoCapturer implements
 
     private final Context mContext;
     private boolean isReadyToGenerate;
+    private int mCameraRotation = 0;
+
     //List<Bitmap> mFrameContainer;
-    private LruCache<String, Bitmap> mMemoryCache;
+    private LruCache<String, Bitmap> mMemoryCache = null;
+    // Get max available VM memory, exceeding this amount will throw an
+    // OutOfMemory exception. Stored in kilobytes as LruCache takes an
+    // int in its constructor.
+    final int maxMemory = (int) (Runtime.getRuntime().maxMemory() / 1024);
+
+    // Use 1/8th of the available memory for this memory cache.
+    final int cacheSize = maxMemory / 8;
 
     //ByteArrayOutputStream mGifByteStream;
     //AnimatedGifEncoder mGifEncoder;
@@ -88,15 +99,11 @@ public class CustomVideoCapturer extends BaseVideoCapturer implements
         //mGifByteStream = new ByteArrayOutputStream();
         //mGifEncoder = new AnimatedGifEncoder();
         isReadyToGenerate = false;
+        initMemoryCache();
 
-        // Get max available VM memory, exceeding this amount will throw an
-        // OutOfMemory exception. Stored in kilobytes as LruCache takes an
-        // int in its constructor.
-        final int maxMemory = (int) (Runtime.getRuntime().maxMemory() / 1024);
+    }
 
-        // Use 1/8th of the available memory for this memory cache.
-        final int cacheSize = maxMemory / 8;
-
+    public void initMemoryCache() {
         mMemoryCache = new LruCache<String, Bitmap>(cacheSize) {
             @Override
             protected int sizeOf(String key, Bitmap bitmap) {
@@ -108,13 +115,29 @@ public class CustomVideoCapturer extends BaseVideoCapturer implements
     }
 
     public void addBitmapToMemoryCache(String key, Bitmap bitmap) {
+        if(mMemoryCache == null) {
+            initMemoryCache();
+        }
         if (getBitmapFromMemCache(key) == null) {
             mMemoryCache.put(key, bitmap);
         }
     }
 
     public Bitmap getBitmapFromMemCache(String key) {
-        return mMemoryCache.get(key);
+        return (mMemoryCache != null) ? mMemoryCache.get(key) : null;
+    }
+
+    public void clearBitmapMemCache() {
+        for (int i = 0; i < 10; i++) {
+            Bitmap bitmap = getBitmapFromMemCache(String.valueOf(i));
+            if(bitmap != null) {
+                bitmap.recycle();
+                bitmap = null;
+            }
+            //mMemoryCache.remove(String.valueOf(i));
+        }
+        mMemoryCache.evictAll();
+        mMemoryCache = null;
     }
 
     @Override
@@ -304,17 +327,17 @@ public class CustomVideoCapturer extends BaseVideoCapturer implements
                 break;
         }
 
-        int cameraOrientation = this.getNaturalCameraOrientation();
-
+        mCameraRotation = this.getNaturalCameraOrientation();
+        //Log.d(LOGTAG, "###### cameraOrientation: " + cameraOrientation);
         int totalCameraRotation = 0;
         boolean usingFrontCamera = this.isFrontCamera();
         if (usingFrontCamera) {
             // The front camera rotates in the opposite direction of the
             // device.
             int inverseCameraRotation = (360 - cameraRotation) % 360;
-            totalCameraRotation = (inverseCameraRotation + cameraOrientation) % 360;
+            totalCameraRotation = (inverseCameraRotation + mCameraRotation) % 360;
         } else {
-            totalCameraRotation = (cameraRotation + cameraOrientation) % 360;
+            totalCameraRotation = (cameraRotation + mCameraRotation) % 360;
         }
 
         return totalCameraRotation;
@@ -403,18 +426,18 @@ public class CustomVideoCapturer extends BaseVideoCapturer implements
                         frame[0] = (byte) (frame_number / mCaptureFPS);
                         new FrameHandler().execute(data.clone(), frame);
 
-                        Toast.makeText(mContext, "Frames Captured: " + frame_number + " w " + mCaptureWidth + " h " + mCaptureHeight + " fps " + mCaptureFPS, Toast.LENGTH_SHORT).show();
+                        //Toast.makeText(mContext, "Frames Captured: " + frame_number + " w " + mCaptureWidth + " h " + mCaptureHeight + " fps " + mCaptureFPS, Toast.LENGTH_SHORT).show();
 
                     }
 
                     frame_number++;
 
-                }else {
+                }/*else {
                     if(frame_number / mCaptureFPS >= 10 && isReadyToGenerate) {
                         isReadyToGenerate = false;
                         new GifHandler().execute();
                     }
-                }
+                }*/
 
             }
         }
@@ -423,45 +446,27 @@ public class CustomVideoCapturer extends BaseVideoCapturer implements
 
     public void startCaptureFrame() {
         mCaptureFrame = true;
-        //AnimatedGifEncoder encoder = new AnimatedGifEncoder();
-        //encoder.start(bos);
-        //mGifEncoder.start(mGifByteStream);
     }
 
     public void stopCaptureFrame() {
         mCaptureFrame = false;
-        //saveGif();
     }
 
     public byte[] generateGIF() {
-        //BitmapFactory.Options options = new BitmapFactory.Options();
-        //options.inPreferredConfig = Bitmap.Config.ARGB_8888;
-        //options.inJustDecodeBounds=true;
         ByteArrayOutputStream bos = new ByteArrayOutputStream();
         AnimatedGifEncoder encoder = new AnimatedGifEncoder();
+        encoder.setFrameRate(2f);
+        encoder.setRepeat(0);
         encoder.start(bos);
         for (int i = 0; i < 10; i++) {
-            //String imgPath = Environment.getExternalStorageDirectory().getPath() + File.separator + "Pictures" + File.separator + "Test" + File.separator + i + ".png";
-            //Bitmap bitmap = BitmapFactory.decodeFile(imgPath, options);
             Bitmap bitmap = getBitmapFromMemCache(String.valueOf(i));
             if(bitmap != null) {
                 encoder.addFrame(bitmap);
             }
         }
         encoder.finish();
-        clearBitmaps();
+        //clearBitmapMemCache();
         return bos.toByteArray();
-    }
-
-    public void clearBitmaps() {
-        /*if(mFrameContainer != null) {
-            for (Bitmap bitmap: mFrameContainer) {
-                bitmap.recycle();
-                bitmap = null;
-            }
-            mFrameContainer.clear();
-        }*/
-        mMemoryCache.evictAll();
     }
 
     public boolean saveGif() {
@@ -475,6 +480,8 @@ public class CustomVideoCapturer extends BaseVideoCapturer implements
         }catch(Exception e){
             e.printStackTrace();
             result = false;
+        }finally {
+            clearBitmapMemCache();
         }
         return result;
     }
@@ -499,42 +506,49 @@ public class CustomVideoCapturer extends BaseVideoCapturer implements
             Log.v("GlobeTrotter", "Beginning AsyncTask");
 
             imageIndex = args[1][0];
-            String filepath = Environment.getExternalStorageDirectory().getPath() + File.separator + "Pictures" + File.separator + "Test" + File.separator + (args[1][0]) + ".png";
-
-            // creates an RGB array in argb8888 from the YUV btye array
+            Log.d(LOGTAG, "######rotation: " + mCameraRotation);
+            // creates an RGB array in argb8888 from the YUV byte array
             decodeYUV(argb8888, args[0], WIDTH, HEIGHT);
-            Bitmap bitmap = Bitmap.createBitmap(argb8888, WIDTH, HEIGHT, Bitmap.Config.ARGB_8888);
-
+            Bitmap originBitmap = Bitmap.createBitmap(argb8888, WIDTH, HEIGHT, Bitmap.Config.ARGB_8888);
+            Bitmap bitmap = (mCameraRotation == 0)?originBitmap: rotateBitmap(originBitmap);
+            //originBitmap.recycle();
+            //originBitmap = null;
             if(bitmap != null) {
+                Log.d(LOGTAG, "######bitmap " + imageIndex);
                 addBitmapToMemoryCache(String.valueOf(imageIndex), bitmap);
+
+                /*String filepath = Environment.getExternalStorageDirectory().getPath() + File.separator + "Pictures" + File.separator + "Test" + File.separator + (args[1][0]) + ".png";
+
+
+                // save a jpeg file locally
+                try {
+                    save(bitmap, filepath);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                } finally {
+                    //bitmap.recycle();
+                }*/
             }
 
-            //mFrameContainer.add(bitmap);
+            if(imageIndex >= 9) {
+                return saveGif();
+            }
 
-            //mGifEncoder.addFrame(bitmap);
-            //bitmap.recycle();
 
-            // save a jpeg file locally
-            /*try {
-                save(bitmap, filepath);
-            } catch (IOException e) {
-                e.printStackTrace();
-            } finally {
-                bitmap.recycle();
-            }*/
 
             // upload that file to the server
             //postData();
 
-            return true;
+            return (bitmap != null);
         }
 
         @Override
-        protected void onPostExecute(Boolean aBoolean) {
+        protected void onPostExecute(Boolean result) {
             if(imageIndex >= 9) {
                 isReadyToGenerate = true;
+                //Toast.makeText(mContext, "Frame " + imageIndex + " Captured " + result, Toast.LENGTH_SHORT).show();
             }
-            Toast.makeText(mContext, "Frame " + imageIndex + " Captured ", Toast.LENGTH_SHORT).show();
+            Toast.makeText(mContext, "Frame " + imageIndex + " Captured " + result, Toast.LENGTH_SHORT).show();
         }
 
         public void save(Bitmap bmp, String filepath) throws IOException {
@@ -607,6 +621,25 @@ public class CustomVideoCapturer extends BaseVideoCapturer implements
                 }
             }
 
+        }
+
+        private ByteArrayInputStream getInputStreamFromBitmap(Bitmap bitmap) {
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.PNG, 0 /*ignored for PNG*/, bos);
+            byte[] bitmapdata = bos.toByteArray();
+            return new ByteArrayInputStream(bitmapdata);
+        }
+
+        public Bitmap rotateBitmap(Bitmap bm) {
+            Bitmap rotatedBitmap = null;
+            Matrix matrix = new Matrix();
+            matrix.setRotate(mCameraRotation);
+            if(!matrix.isIdentity()) {
+                rotatedBitmap = Bitmap.createBitmap(bm, 0, 0, bm.getWidth(), bm.getHeight(), matrix, true);
+            }else {
+                rotatedBitmap = bm;
+            }
+            return rotatedBitmap;
         }
     }
 
