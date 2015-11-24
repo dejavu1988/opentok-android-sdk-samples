@@ -37,7 +37,7 @@ public class VideoCapturerActivity extends Activity implements
         Session.SessionListener, Publisher.PublisherListener,
         Subscriber.VideoListener {
 
-    private static final String LOGTAG = "demo-customer-video-capturer";
+    private static final String LOGTAG = "customer-video-capturer";
 
     private Session mSession;
     private Publisher mPublisher;
@@ -58,6 +58,7 @@ public class VideoCapturerActivity extends Activity implements
     private NotificationManager mNotificationManager;
     private ServiceConnection mConnection;
 
+    private CustomVideoCapturer mVideoCapturer;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -284,8 +285,8 @@ public class VideoCapturerActivity extends Activity implements
             mPublisher = new Publisher(VideoCapturerActivity.this, "publisher");
             mPublisher.setPublisherListener(this);
             // use an external customer video capturer
-            mPublisher.setCapturer(new CustomVideoCapturer(
-                    VideoCapturerActivity.this));
+            mVideoCapturer = new CustomVideoCapturer(VideoCapturerActivity.this);
+            mPublisher.setCapturer(mVideoCapturer);
             attachPublisherView(mPublisher);
             mSession.publish(mPublisher);
         }
@@ -297,6 +298,10 @@ public class VideoCapturerActivity extends Activity implements
         if (mPublisher != null) {
             mPublisherViewContainer.removeView(mPublisher.getRenderer()
                     .getView());
+        }
+
+        if(mVideoCapturer != null) {
+            mVideoCapturer.destroy();
         }
 
         if (mSubscriber != null) {
