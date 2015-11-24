@@ -88,7 +88,7 @@ public class CustomVideoCapturer extends BaseVideoCapturer implements
         mContext = context;
 
         // Initialize front camera by default
-        this.mCameraIndex = getFrontCameraIndex();
+        this.mCameraIndex = getBackCameraIndex(); //getFrontCameraIndex();
 
         // Get current display to query UI orientation
         WindowManager windowManager = (WindowManager) context
@@ -351,6 +351,17 @@ public class CustomVideoCapturer extends BaseVideoCapturer implements
             Camera.CameraInfo info = new Camera.CameraInfo();
             Camera.getCameraInfo(i, info);
             if (info.facing == Camera.CameraInfo.CAMERA_FACING_FRONT) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    private static int getBackCameraIndex() {
+        for (int i = 0; i < Camera.getNumberOfCameras(); ++i) {
+            Camera.CameraInfo info = new Camera.CameraInfo();
+            Camera.getCameraInfo(i, info);
+            if (info.facing == Camera.CameraInfo.CAMERA_FACING_BACK) {
                 return i;
             }
         }
